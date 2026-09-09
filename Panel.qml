@@ -656,7 +656,22 @@ Panel {
             meta: copilotSource.plan
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/github.svg"); tint: root.popupText } }
+            iconComponent: Component {
+              Rectangle {
+                width: Style.font.display + Style.space(10)
+                height: width
+                radius: Style.space(6)
+                color: "#0d1117"
+
+                VendorMark {
+                  anchors.centerIn: parent
+                  width: Style.font.display * 0.68
+                  height: width
+                  source: Qt.resolvedUrl("assets/github.svg")
+                  tint: "#ffffff"
+                }
+              }
+            }
           }
 
           Text {
