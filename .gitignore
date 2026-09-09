@@ -1,0 +1,14 @@
+# Never commit anything credential-shaped. This repo is also the live plugin
+# directory (symlinked from ~/.config/omarchy/plugins/bwright.ai-usage) and is
+# pushed to a public GitHub remote — nothing the plugin writes at runtime
+# should exist here in the first place (see spec.md "Security"), but this is
+# defense-in-depth against an accidental stray file.
+.env
+*.token
+*credentials*
+*.log
+
+# Python test/bytecode artifacts from running the pytest suite locally.
+__pycache__/
+*.pyc
+.pytest_cache/

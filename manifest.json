@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "bwright.ai-usage",
+  "name": "AI Usage",
+  "version": "1.0.0",
+  "author": "bwright",
+  "license": "MIT",
+  "description": "Claude Code and GitHub Copilot (JSI) usage in one bar icon and popup panel.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Usage",
+    "description": "One bar icon and one panel: Claude Code and GitHub Copilot usage, switchable by tab.",
+    "category": "AI",
+    "aliases": ["ai-usage", "usage"],
+    "allowMultiple": false
+  }
+}
