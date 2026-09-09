@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -373,23 +374,27 @@ Panel {
     }
   }
 
-  // Small text-glyph badge -- deliberately not a vendor SVG mark, per
-  // spec.md's "no custom SVG marks for v1" decision.
-  component VendorBadge: Rectangle {
-    property string glyph: ""
+  // Real vendor marks (assets/claude.svg, assets/github.svg) -- a later,
+  // explicit user request superseding spec.md's original "no custom SVG
+  // marks for v1" decision. claude.svg is the exact asset
+  // /usr/share/omarchy/shell/plugins/agents/Panel.qml already ships;
+  // github.svg is Primer Octicons' "mark-github" (MIT-licensed).
+  component VendorMark: Image {
+    id: vendorMark
+    // Leave transparent for a mark with its own brand color baked in
+    // (Claude's orange); set to recolor a monochrome mark (GitHub's, which
+    // ships with no fill and renders black -- invisible on a dark popup).
+    property color tint: "transparent"
+
     width: Style.font.display
     height: Style.font.display
-    radius: width / 2
-    color: root.alpha(Color.accent, 0.18)
+    fillMode: Image.PreserveAspectFit
+    smooth: true
 
-    Text {
-      anchors.centerIn: parent
-      textFormat: Text.PlainText
-      text: parent.glyph
-      color: Color.accent
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.title
-      font.bold: true
+    layer.enabled: vendorMark.tint.a > 0
+    layer.effect: MultiEffect {
+      colorization: 1.0
+      colorizationColor: vendorMark.tint
     }
   }
 
@@ -521,7 +526,7 @@ Panel {
             meta: root.claudeTierMeta()
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component { VendorBadge { glyph: "C" } }
+            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/claude.svg") } }
           }
 
           Text {
@@ -651,7 +656,7 @@ Panel {
             meta: copilotSource.plan
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component { VendorBadge { glyph: "G" } }
+            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/github.svg"); tint: root.popupText } }
           }
 
           Text {

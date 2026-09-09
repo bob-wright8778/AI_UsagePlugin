@@ -75,3 +75,8 @@ constraints (subprocess argv/env handling, no plugin-written token files, loggin
 - `ClaudeSource.qml`, `CopilotSource.qml` — process-backed data sources feeding `Panel.qml`.
 - `bin/ai-usage-copilot` — the Copilot fetch script described above.
 - `tests/test_ai_usage_copilot.py` — pytest suite for that script (`pytest tests/`).
+- `assets/claude.svg` — Anthropic's Claude mark, copied verbatim from
+  `/usr/share/omarchy/shell/plugins/agents/assets/claude.svg` (the same asset the built-in
+  `omarchy.agents` widget ships).
+- `assets/github.svg` — Primer Octicons' `mark-github` icon (MIT-licensed,
+  `github.com/primer/octicons`), used to represent GitHub Copilot.
