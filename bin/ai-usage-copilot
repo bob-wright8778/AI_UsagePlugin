@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Fetch GitHub Copilot quota for the bobbyw_jsi account and print one JSON record.
+
+On success, prints {"plan", "quotaResetDate", "categories": {chat, completions,
+premium_interactions}} to stdout and exits 0. On any failure, prints a fixed,
+credential-free diagnostic to stderr and exits 1 -- never partial JSON, never
+raw subprocess/HTTP output, never a token or header value.
+"""
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+GH_HOSTNAME = "github.com"
+GH_USER = "bobbyw_jsi"
+API_URL = "https://api.github.com/copilot_internal/user"
+QUOTA_CATEGORIES = ("chat", "completions", "premium_interactions")
+TOKEN_OVERRIDE_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+# VS Code Copilot Chat's own request shape -- this undocumented endpoint
+# responds only to callers that look like it.
+REQUEST_HEADERS = {
+    "Editor-Version": "vscode/1.95.0",
+    "Editor-Plugin-Version": "copilot-chat/0.23.0",
+    "User-Agent": "GitHubCopilotChat/0.23.0",
+    "X-GitHub-Api-Version": "2025-04-01",
+}
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect, same-host or not. A 3xx becomes an HTTPError
+    the caller turns into the unavailable state, never a second request."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def credential_env():
+    env = dict(os.environ)
+    for var in TOKEN_OVERRIDE_VARS:
+        env.pop(var, None)
+    return env
+
+
+def get_token():
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token", "--hostname", GH_HOSTNAME, "--user", GH_USER],
+            capture_output=True,
+            shell=False,
+            env=credential_env(),
+            text=True,
+        )
+    except FileNotFoundError:
+        fail("Copilot unavailable: gh not installed")
+    if result.returncode != 0:
+        fail("Copilot unavailable: no stored credential")
+    token = result.stdout.strip()
+    if not token:
+        fail("Copilot unavailable: no stored credential")
+    return token
+
+
+def fetch_quota(token, url=API_URL):
+    opener = urllib.request.build_opener(NoRedirectHandler)
+    headers = dict(REQUEST_HEADERS)
+    headers["Authorization"] = "token " + token
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        response = opener.open(request, timeout=10)
+    except urllib.error.HTTPError as e:
+        fail("Copilot unavailable: HTTP " + str(e.code))
+    except urllib.error.URLError:
+        fail("Copilot unavailable: request failed")
+    try:
+        body = response.read()
+    finally:
+        response.close()
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        fail("Copilot unavailable: malformed response")
+
+
+def build_record(payload):
+    try:
+        snapshots = payload["quota_snapshots"]
+        categories = {}
+        for name in QUOTA_CATEGORIES:
+            snapshot = snapshots[name]
+            categories[name] = {
+                "unlimited": bool(snapshot["unlimited"]),
+                "remaining": snapshot["remaining"],
+                "entitlement": snapshot["entitlement"],
+                "creditsUsed": snapshot["credits_used"],
+            }
+        return {
+            "plan": payload["copilot_plan"],
+            "quotaResetDate": payload["quota_reset_date"],
+            "categories": categories,
+        }
+    except (KeyError, TypeError):
+        fail("Copilot unavailable: unexpected response shape")
+
+
+def main():
+    # A stray, truly-unexpected exception (not one of the specific failure
+    # paths above, which already exit via fail()) must still never reach
+    # stderr as a raw traceback -- that could echo back request/response
+    # internals. sys.exit()'s SystemExit isn't an Exception subclass, so the
+    # fail() calls above pass through this untouched.
+    try:
+        token = get_token()
+        payload = fetch_quota(token)
+        record = build_record(payload)
+        print(json.dumps(record))
+    except Exception:
+        fail("Copilot unavailable: unexpected error")
+
+
+if __name__ == "__main__":
+    main()
