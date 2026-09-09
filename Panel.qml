@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -374,28 +373,18 @@ Panel {
     }
   }
 
-  // Real vendor marks (assets/claude.svg, assets/github.svg) -- a later,
+  // Real vendor marks (assets/claude.svg, assets/github.png) -- a later,
   // explicit user request superseding spec.md's original "no custom SVG
   // marks for v1" decision. claude.svg is the exact asset
   // /usr/share/omarchy/shell/plugins/agents/Panel.qml already ships;
-  // github.svg is Primer Octicons' "mark-github" (MIT-licensed).
+  // github.png is a user-supplied glow-style mark (already dark-background
+  // and self-contained, unlike a bare flat mark -- no separate badge/tint
+  // needed here).
   component VendorMark: Image {
-    id: vendorMark
-    // Leave transparent for a mark with its own brand color baked in
-    // (Claude's orange); set to recolor a monochrome mark (GitHub's, which
-    // ships with no fill and renders black -- invisible on a dark popup).
-    property color tint: "transparent"
-
     width: Style.font.display
     height: Style.font.display
     fillMode: Image.PreserveAspectFit
     smooth: true
-
-    layer.enabled: vendorMark.tint.a > 0
-    layer.effect: MultiEffect {
-      colorization: 1.0
-      colorizationColor: vendorMark.tint
-    }
   }
 
   ClaudeSource {
@@ -656,22 +645,7 @@ Panel {
             meta: copilotSource.plan
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component {
-              Rectangle {
-                width: Style.font.display + Style.space(10)
-                height: width
-                radius: Style.space(6)
-                color: "#0d1117"
-
-                VendorMark {
-                  anchors.centerIn: parent
-                  width: Style.font.display * 0.68
-                  height: width
-                  source: Qt.resolvedUrl("assets/github.svg")
-                  tint: "#ffffff"
-                }
-              }
-            }
+            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/github.png") } }
           }
 
           Text {

@@ -78,5 +78,5 @@ constraints (subprocess argv/env handling, no plugin-written token files, loggin
 - `assets/claude.svg` — Anthropic's Claude mark, copied verbatim from
   `/usr/share/omarchy/shell/plugins/agents/assets/claude.svg` (the same asset the built-in
   `omarchy.agents` widget ships).
-- `assets/github.svg` — Primer Octicons' `mark-github` icon (MIT-licensed,
-  `github.com/primer/octicons`), used to represent GitHub Copilot.
+- `assets/github.png` — a glow-style GitHub mark supplied by the user, used to represent GitHub
+  Copilot.
