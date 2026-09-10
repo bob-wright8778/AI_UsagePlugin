@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """Fetch GitHub Copilot quota for the bobbyw_jsi account and print one JSON record.
 
-On success, prints {"plan", "quotaResetDate", "categories": {chat, completions,
-premium_interactions}} to stdout and exits 0. On any failure, prints a fixed,
-credential-free diagnostic to stderr and exits 1 -- never partial JSON, never
-raw subprocess/HTTP output, never a token or header value.
+On success, prints {"plan", "quotaResetDate", "recentDays": [{"date", "creditsUsed"}, ...]} to
+stdout and exits 0. `recentDays` is derived locally: the copilot_internal/user endpoint only ever
+returns a cumulative total for the current billing period, never a daily breakdown, so this script
+samples that total on every run into a small local history cache
+($XDG_CACHE_HOME/bwright.ai-usage/copilot-history.json) and computes day-over-day deltas from it.
+That cache holds only ISO dates and integer credit totals -- never the token, a header, or a raw
+API response -- and a failure to read/write it (missing, corrupt, unwritable) degrades to "no
+historical days yet," never to the failure path below, which is reserved for the quota fetch
+itself. On any fetch failure, prints a fixed, credential-free diagnostic to stderr and exits 1 --
+never partial JSON, never raw subprocess/HTTP output, never a token or header value.
 """
+import datetime
+import fcntl
 import json
 import os
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 GH_HOSTNAME = "github.com"
 GH_USER = "bobbyw_jsi"
@@ -27,6 +36,10 @@ REQUEST_HEADERS = {
     "User-Agent": "GitHubCopilotChat/0.23.0",
     "X-GitHub-Api-Version": "2025-04-01",
 }
+
+CACHE_NAMESPACE = "bwright.ai-usage"
+HISTORY_FILENAME = "copilot-history.json"
+HISTORY_RETENTION_DAYS = 8  # enough distinct calendar dates to derive 7 daily deltas
 
 
 def fail(message):
@@ -89,25 +102,90 @@ def fetch_quota(token, url=API_URL):
         fail("Copilot unavailable: malformed response")
 
 
-def build_record(payload):
+def parse_quota(payload):
     try:
         snapshots = payload["quota_snapshots"]
-        categories = {}
-        for name in QUOTA_CATEGORIES:
-            snapshot = snapshots[name]
-            categories[name] = {
-                "unlimited": bool(snapshot["unlimited"]),
-                "remaining": snapshot["remaining"],
-                "entitlement": snapshot["entitlement"],
-                "creditsUsed": snapshot["credits_used"],
-            }
+        total = sum(int(snapshots[name]["credits_used"]) for name in QUOTA_CATEGORIES)
         return {
             "plan": payload["copilot_plan"],
             "quotaResetDate": payload["quota_reset_date"],
-            "categories": categories,
+            "totalCreditsUsed": total,
         }
     except (KeyError, TypeError):
         fail("Copilot unavailable: unexpected response shape")
+
+
+# --------------------------------------------------------- daily-history bookkeeping
+
+
+def history_path():
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / CACHE_NAMESPACE / HISTORY_FILENAME
+
+
+def local_today_string():
+    return datetime.date.today().isoformat()
+
+
+def prune_history(history, keep=HISTORY_RETENTION_DAYS):
+    kept_dates = sorted(history, reverse=True)[:keep]
+    return {date: history[date] for date in kept_dates}
+
+
+def compute_recent_days(history):
+    """Turn a {date: cumulative_total} history into day-over-day deltas, oldest first,
+    capped at the last 7. The earliest date in `history` has no prior sample to diff
+    against and is never emitted. A delta that would be negative (a billing-period
+    reset dropped the cumulative total) is clamped to the raw post-reset value instead."""
+    dates = sorted(history)
+    days = []
+    for i in range(1, len(dates)):
+        delta = history[dates[i]] - history[dates[i - 1]]
+        if delta < 0:
+            delta = history[dates[i]]
+        days.append({"date": dates[i], "creditsUsed": delta})
+    return days[-7:]
+
+
+def sample_history(path, today, total_now, keep=HISTORY_RETENTION_DAYS):
+    """Record `total_now` as `today`'s cumulative snapshot under an exclusive file lock
+    (guards against the refresh timer and a manual refresh overlapping), prune to the
+    last `keep` calendar dates, and return the resulting history dict. Creates the file
+    and its parent directory if missing; a corrupt or empty existing file is treated as
+    an empty history rather than raised."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            raw = f.read()
+            try:
+                history = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                history = {}
+            if not isinstance(history, dict):
+                history = {}
+            history[today] = total_now
+            history = prune_history(history, keep)
+            f.seek(0)
+            f.truncate()
+            json.dump(history, f)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+    return history
+
+
+def recent_days_for(total_now, today):
+    """Best-effort day-by-day credits history: sample `total_now` into the local cache
+    and return the resulting deltas. Any failure here (unwritable cache, corrupt file,
+    permissions) degrades to no historical days -- this must never turn a successful
+    quota fetch into a failed command; that failure path is reserved for the fetch
+    itself."""
+    try:
+        history = sample_history(history_path(), today, total_now)
+        return compute_recent_days(history)
+    except Exception:
+        return []
 
 
 def main():
@@ -119,7 +197,24 @@ def main():
     try:
         token = get_token()
         payload = fetch_quota(token)
-        record = build_record(payload)
+        quota = parse_quota(payload)
+        today = local_today_string()
+        recent_days = recent_days_for(quota["totalCreditsUsed"], today=today)
+        # Mirrors the collector's own todayPrompts/todaySessions/todayTotalTokens
+        # fields for Claude -- the caller gets "today" as a plain value, never
+        # has to date-compare recentDays itself. -1 is this codebase's existing
+        # "not available" sentinel (see e.g. Panel.qml's MeterRow meterValue).
+        today_credits_used = (
+            recent_days[-1]["creditsUsed"]
+            if recent_days and recent_days[-1]["date"] == today
+            else -1
+        )
+        record = {
+            "plan": quota["plan"],
+            "quotaResetDate": quota["quotaResetDate"],
+            "recentDays": recent_days,
+            "todayCreditsUsed": today_credits_used,
+        }
         print(json.dumps(record))
     except Exception:
         fail("Copilot unavailable: unexpected error")

@@ -61,7 +61,9 @@ Panel {
     return isFinite(ms) ? formatDuration(ms) : ""
   }
 
-  function formatTokenCount(n) {
+  // Shared by Claude's token-count day/model rows and Copilot's credit-count
+  // day rows -- both are just "a count", so one formatter serves both.
+  function formatCount(n) {
     var v = Number(n || 0)
     if (v >= 1000000) return (v / 1000000).toFixed(1) + "M"
     if (v >= 1000) return (v / 1000).toFixed(1) + "K"
@@ -84,9 +86,24 @@ Panel {
     return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][parsed.getDay()]
   }
 
+  function isToday(date) {
+    return String(date || "") === root.todayDate()
+  }
+
+  // Adapts a vendor-shaped day record ({date, messageCount} for Claude,
+  // {date, creditsUsed} for Copilot) into the generic {date, value} shape
+  // DaySection/weekPeak work with -- the one place a field name is looked
+  // up by string, so neither of those has to be.
+  function toDayValues(days, field) {
+    var out = []
+    for (var i = 0; i < days.length; i++)
+      out.push({ date: days[i].date, value: Number(days[i][field] || 0) })
+    return out
+  }
+
   function weekPeak(days) {
     var peak = 0
-    for (var i = 0; i < days.length; i++) peak = Math.max(peak, Number(days[i].messageCount || 0))
+    for (var i = 0; i < days.length; i++) peak = Math.max(peak, Number(days[i].value || 0))
     return peak
   }
 
@@ -94,36 +111,13 @@ Panel {
     return Math.max(Number(claudeSource.sessionPercent || 0), Number(claudeSource.weeklyPercent || 0))
   }
 
-  // A bounded Copilot category's remaining fraction, or -1 for unlimited/
-  // missing -- the one place that decides "is this category limited, and by
-  // how much," shared by the bar summary and each category's own row.
-  function categoryPercentLeft(c) {
-    return (c && c.unlimited === false && Number(c.entitlement) > 0)
-      ? Number(c.remaining) / Number(c.entitlement) : -1
-  }
-
-  // Copilot categories are usually all `unlimited`; the summary only turns
-  // into a percentage once at least one category actually has a bounded
-  // entitlement (the finest signal `copilot_internal/user` gives us).
-  function copilotBindingPercent() {
-    var cats = copilotSource.categories || {}
-    var minLeft = 1
-    var anyLimited = false
-    for (var key in cats) {
-      var left = root.categoryPercentLeft(cats[key])
-      if (left >= 0) {
-        anyLimited = true
-        minLeft = Math.min(minLeft, left)
-      }
-    }
-    return anyLimited ? (1 - minLeft) : -1
-  }
-
+  // No per-category remaining/entitlement data crosses the collector
+  // boundary any more (see CopilotSource.qml) -- this account's categories
+  // are all unlimited in practice, so the bar reads as unbounded rather than
+  // computing a percentage that never turns out to be less than 100%.
   function summaryLabel() {
     if (root.selectedTab === "copilot") {
-      if (!copilotSource.available) return "Copilot —"
-      var percent = copilotBindingPercent()
-      return percent < 0 ? "Copilot ∞" : "Copilot " + Math.round(percent * 100) + "%"
+      return copilotSource.available ? "Copilot ∞" : "Copilot —"
     }
     if (!claudeSource.available) return "Claude —"
     return "Claude " + Math.round(claudeBindingPercent() * 100) + "%"
@@ -146,27 +140,18 @@ Panel {
     return left !== "" ? "Resets in " + left : ""
   }
 
-  function categoryValueText(c) {
-    var left = root.categoryPercentLeft(c)
-    return left >= 0 ? Math.round(left * 100) + "% left" : "∞"
+  function copilotTodaySummaryText() {
+    return copilotSource.todayCreditsUsed >= 0
+      ? "Today: " + root.formatCount(copilotSource.todayCreditsUsed) + " credits used"
+      : ""
   }
-
-  function categoryCaptionText(c) {
-    return Number(c ? c.creditsUsed || 0 : 0) + " credits used"
-  }
-
-  readonly property var copilotCategories: [
-    { key: "chat", label: "Chat" },
-    { key: "completions", label: "Completions" },
-    { key: "premium_interactions", label: "Premium interactions" }
-  ]
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   // Rounded track showing the percentage of an allowance used. `full`
-  // renders a muted, always-full track instead -- Copilot's "Unlimited"
-  // categories have no percentage to show, but still read as a bar.
+  // renders a muted, always-full track instead, for a limit with no
+  // percentage to show that should still read as a bar.
   component Meter: Item {
     id: meter
     property real value: -1
@@ -195,10 +180,7 @@ Panel {
   }
 
   // A labelled percentage row: title + value, a meter, a dim caption below.
-  // Shared by Claude's Session/Weekly limits and Copilot's quota categories
-  // (Unlimited categories pass meterFull instead of a real percentage) --
-  // the two started as separate near-identical components and were
-  // collapsed here once that duplication showed up in review.
+  // Used by Claude's Session/Weekly limits.
   component MeterRow: Column {
     id: meterRow
     property string title: ""
@@ -253,11 +235,15 @@ Panel {
     }
   }
 
-  // One row per day: label, bar (scaled to the week's peak), tokens. Today
+  // One row per day: label, bar (scaled to the week's peak), a count. Today
   // is picked out in full foreground so the week reads as a run-up to now.
+  // Vendor-agnostic -- the caller supplies the already-formatted date label
+  // and the raw count (tokens for Claude, credits for Copilot); this
+  // component only knows how to draw a day, not what the number means.
   component DayRow: Item {
     id: dayRow
-    property var day: null
+    property string dateLabel: ""
+    property real value: 0
     property real ratio: 0
     property bool today: false
 
@@ -266,7 +252,7 @@ Panel {
     Text {
       id: dayLabelText
       textFormat: Text.PlainText
-      text: root.dayLabel(dayRow.day ? dayRow.day.date : "", dayRow.today)
+      text: dayRow.dateLabel
       color: dayRow.today ? root.popupText : root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -304,7 +290,7 @@ Panel {
     Text {
       id: dayValue
       textFormat: Text.PlainText
-      text: root.formatTokenCount(dayRow.day ? Number(dayRow.day.messageCount || 0) : 0)
+      text: root.formatCount(dayRow.value)
       color: dayRow.today ? root.popupText : root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -313,6 +299,42 @@ Panel {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       width: Style.space(52)
+    }
+  }
+
+  // A titled section header + one DayRow per entry, scaled to the week's
+  // peak. `days` is the generic {date, value} shape from toDayValues() --
+  // shared by Claude's TOKENS BY DAY and Copilot's CREDITS BY DAY, which
+  // otherwise only differed in header text and source field name.
+  component DaySection: Column {
+    id: daySection
+    property var days: []
+    property string headerText: ""
+
+    visible: daySection.days.length > 0
+    width: parent.width
+    spacing: Style.spacing.sm
+
+    readonly property real peak: Math.max(1, root.weekPeak(daySection.days))
+
+    PanelSectionHeader {
+      width: parent.width
+      text: daySection.headerText
+      foreground: root.popupText
+      fontFamily: root.fontFamily
+    }
+
+    Repeater {
+      model: daySection.days
+
+      DayRow {
+        required property var modelData
+        width: daySection.width
+        today: root.isToday(modelData.date)
+        dateLabel: root.dayLabel(modelData.date, today)
+        value: modelData.value
+        ratio: modelData.value / daySection.peak
+      }
     }
   }
 
@@ -362,7 +384,7 @@ Panel {
     Text {
       id: modelTokens
       textFormat: Text.PlainText
-      text: modelRow.row ? root.formatTokenCount(modelRow.row.total) : ""
+      text: modelRow.row ? root.formatCount(modelRow.row.total) : ""
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -373,24 +395,18 @@ Panel {
     }
   }
 
-  // Small text-glyph badge -- deliberately not a vendor SVG mark, per
-  // spec.md's "no custom SVG marks for v1" decision.
-  component VendorBadge: Rectangle {
-    property string glyph: ""
+  // Real vendor marks (assets/claude.svg, assets/github.png) -- a later,
+  // explicit user request superseding spec.md's original "no custom SVG
+  // marks for v1" decision. claude.svg is the exact asset
+  // /usr/share/omarchy/shell/plugins/agents/Panel.qml already ships;
+  // github.png is a user-supplied glow-style mark (already dark-background
+  // and self-contained, unlike a bare flat mark -- no separate badge/tint
+  // needed here).
+  component VendorMark: Image {
     width: Style.font.display
     height: Style.font.display
-    radius: width / 2
-    color: root.alpha(Color.accent, 0.18)
-
-    Text {
-      anchors.centerIn: parent
-      textFormat: Text.PlainText
-      text: parent.glyph
-      color: Color.accent
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.title
-      font.bold: true
-    }
+    fillMode: Image.PreserveAspectFit
+    smooth: true
   }
 
   ClaudeSource {
@@ -521,7 +537,7 @@ Panel {
             meta: root.claudeTierMeta()
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component { VendorBadge { glyph: "C" } }
+            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/claude.svg") } }
           }
 
           Text {
@@ -567,32 +583,10 @@ Panel {
               foreground: root.popupText
             }
 
-            Column {
+            DaySection {
               id: daysSection
-              visible: claudeSource.recentDays.length > 0
-              width: parent.width
-              spacing: Style.spacing.sm
-
-              readonly property real peak: Math.max(1, root.weekPeak(claudeSource.recentDays))
-
-              PanelSectionHeader {
-                width: parent.width
-                text: "TOKENS BY DAY"
-                foreground: root.popupText
-                fontFamily: root.fontFamily
-              }
-
-              Repeater {
-                model: claudeSource.recentDays
-
-                DayRow {
-                  required property var modelData
-                  width: daysSection.width
-                  day: modelData
-                  ratio: Number(modelData.messageCount || 0) / daysSection.peak
-                  today: String(modelData.date || "") === root.todayDate()
-                }
-              }
+              headerText: "TOKENS BY DAY"
+              days: root.toDayValues(claudeSource.recentDays, "messageCount")
             }
 
             PanelSeparator {
@@ -630,7 +624,7 @@ Panel {
               wrapMode: Text.WordWrap
               textFormat: Text.PlainText
               text: "Today: " + claudeSource.todayPrompts + " prompts · " + claudeSource.todaySessions
-                + " sessions · " + root.formatTokenCount(claudeSource.todayTotalTokens) + " tokens"
+                + " sessions · " + root.formatCount(claudeSource.todayTotalTokens) + " tokens"
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -651,7 +645,7 @@ Panel {
             meta: copilotSource.plan
             foreground: root.popupText
             fontFamily: root.fontFamily
-            iconComponent: Component { VendorBadge { glyph: "G" } }
+            iconComponent: Component { VendorMark { source: Qt.resolvedUrl("assets/github.png") } }
           }
 
           Text {
@@ -688,28 +682,26 @@ Panel {
             }
 
             PanelSeparator {
+              visible: copilotDaysSection.visible
               foreground: root.popupText
             }
 
-            PanelSectionHeader {
-              text: "CATEGORIES"
-              foreground: root.popupText
-              fontFamily: root.fontFamily
+            DaySection {
+              id: copilotDaysSection
+              headerText: "CREDITS BY DAY"
+              days: root.toDayValues(copilotSource.recentDays, "creditsUsed")
             }
 
-            Repeater {
-              model: root.copilotCategories
-
-              MeterRow {
-                required property var modelData
-                readonly property var category: (copilotSource.categories || {})[modelData.key]
-                width: parent.width
-                title: modelData.label
-                valueText: root.categoryValueText(category)
-                meterValue: root.categoryPercentLeft(category)
-                meterFull: !category || category.unlimited !== false
-                captionText: root.categoryCaptionText(category)
-              }
+            Text {
+              width: parent.width
+              visible: text !== ""
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: root.copilotTodaySummaryText()
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignHCenter
             }
           }
         }
