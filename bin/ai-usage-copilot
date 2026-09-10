@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Fetch GitHub Copilot quota for the bobbyw_jsi account and print one JSON record.
 
-On success, prints {"plan", "quotaResetDate", "recentDays": [{"date", "creditsUsed"}, ...]} to
-stdout and exits 0. `recentDays` is derived locally: the copilot_internal/user endpoint only ever
-returns a cumulative total for the current billing period, never a daily breakdown, so this script
-samples that total on every run into a small local history cache
+On success, prints {"plan", "quotaResetDate", "recentDays": [{"date", "creditsUsed"}, ...],
+"todayCreditsUsed", "totalCreditsUsed"} to stdout and exits 0. `totalCreditsUsed` is the raw
+period-cumulative sum straight from the API, always present. `recentDays`/`todayCreditsUsed` are
+derived locally: the copilot_internal/user endpoint only ever returns that one cumulative total,
+never a daily breakdown, so this script samples it on every run into a small local history cache
 ($XDG_CACHE_HOME/bwright.ai-usage/copilot-history.json) and computes day-over-day deltas from it.
 That cache holds only ISO dates and integer credit totals -- never the token, a header, or a raw
 API response -- and a failure to read/write it (missing, corrupt, unwritable) degrades to "no
@@ -214,6 +215,7 @@ def main():
             "quotaResetDate": quota["quotaResetDate"],
             "recentDays": recent_days,
             "todayCreditsUsed": today_credits_used,
+            "totalCreditsUsed": quota["totalCreditsUsed"],
         }
         print(json.dumps(record))
     except Exception:

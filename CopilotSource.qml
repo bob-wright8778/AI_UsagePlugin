@@ -20,6 +20,9 @@ Item {
   // same as Claude's todayPrompts/todaySessions/todayTotalTokens -- a
   // caller never has to date-compare recentDays to find "today" in it.
   property real todayCreditsUsed: -1
+  // Raw period-cumulative total straight from the API -- always present
+  // whenever available is true, unlike todayCreditsUsed's cold-start gap.
+  property real totalCreditsUsed: 0
 
   function refresh() {
     if (!proc.running) proc.running = true
@@ -34,6 +37,7 @@ Item {
       root.quotaResetDate = String(record.quotaResetDate || "")
       root.recentDays = record.recentDays
       root.todayCreditsUsed = Number(record.todayCreditsUsed)
+      root.totalCreditsUsed = Number(record.totalCreditsUsed)
       root.available = true
     } catch (e) {
       root.available = false

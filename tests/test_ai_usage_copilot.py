@@ -488,6 +488,7 @@ def test_main_success_prints_one_json_record_and_exits_zero(mod, monkeypatch, ca
     assert "categories" not in record
     assert record["recentDays"] == []
     assert record["todayCreditsUsed"] == -1  # no prior-day baseline yet -- first run
+    assert record["totalCreditsUsed"] == 11807  # period-cumulative, always present
     assert SYNTHETIC_TOKEN not in out.out
     assert SYNTHETIC_TOKEN not in out.err
 

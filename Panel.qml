@@ -681,6 +681,16 @@ Panel {
               font.pixelSize: Style.font.body
             }
 
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: "Total credits used: " + root.formatCount(copilotSource.totalCreditsUsed)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             PanelSeparator {
               visible: copilotDaysSection.visible
               foreground: root.popupText
