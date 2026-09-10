@@ -13,10 +13,12 @@ the full design, decisions, and acceptance criteria this README summarizes.
 - **Claude tab** — session (5h) and weekly (7d) rate-limit percent used and reset times, today's
   prompt/session/token counts, and a per-model token breakdown. Sourced from Omarchy's own
   `omarchy-agent-usage-claude` collector.
-- **Copilot tab** — plan name, quota reset date, and each of chat/completions/premium_interactions as
-  either Unlimited (with credits used) or a remaining/entitlement figure. Sourced from
-  `bin/ai-usage-copilot`, which calls GitHub's private `api.github.com/copilot_internal/user` endpoint
-  for the `bobbyw_jsi` account.
+- **Copilot tab** — plan name, quota reset date, a credits-by-day chart, and today's credits used.
+  Sourced from `bin/ai-usage-copilot`, which calls GitHub's private
+  `api.github.com/copilot_internal/user` endpoint for the `bobbyw_jsi` account. That endpoint only ever
+  reports a cumulative total for the current billing period, so the script samples it on every refresh
+  into a local cache (`$XDG_CACHE_HOME/bwright.ai-usage/copilot-history.json` — dates and integer
+  credit totals only, never the token) and derives the daily deltas from that history.
 
 `h`/`l` or click switches tabs; `r`/Enter refreshes; Esc closes. Refreshes automatically every 15
 minutes.
