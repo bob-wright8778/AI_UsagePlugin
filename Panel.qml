@@ -113,11 +113,13 @@ Panel {
 
   // No per-category remaining/entitlement data crosses the collector
   // boundary any more (see CopilotSource.qml) -- this account's categories
-  // are all unlimited in practice, so the bar reads as unbounded rather than
-  // computing a percentage that never turns out to be less than 100%.
+  // are all unlimited in practice, so there's no percentage to show. Show
+  // the running total credits used instead of an unbounded "∞" symbol.
   function summaryLabel() {
     if (root.selectedTab === "copilot") {
-      return copilotSource.available ? "Copilot ∞" : "Copilot —"
+      return copilotSource.available
+        ? "Copilot: " + root.formatCount(copilotSource.totalCreditsUsed)
+        : "Copilot —"
     }
     if (!claudeSource.available) return "Claude —"
     return "Claude " + Math.round(claudeBindingPercent() * 100) + "%"
