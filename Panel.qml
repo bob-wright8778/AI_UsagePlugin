@@ -4,7 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar icon + popup host for Claude Code and GitHub Copilot (JSI) usage.
+// Bar icon + popup host for Claude Code and GitHub Copilot usage.
 // Two switchable tabs, one vendor visible at a time -- mirrors
 // omarchy.agents's subscription-switch interaction (h/l/click to switch,
 // scroll to cycle), its Panel-as-barWidget-entry-point shape, and its
@@ -14,8 +14,8 @@ import qs.Ui
 // /usr/share/omarchy/shell/plugins/agents/Panel.qml).
 Panel {
   id: root
-  moduleName: "bwright.ai-usage"
-  ipcTarget: "bwright.ai-usage"
+  moduleName: "bob-wright8778.ai-usage"
+  ipcTarget: "bob-wright8778.ai-usage"
   manageIpc: false
 
   // Bar button text follows the bar's own injected foreground (WidgetButton
@@ -112,12 +112,14 @@ Panel {
   }
 
   // No per-category remaining/entitlement data crosses the collector
-  // boundary any more (see CopilotSource.qml) -- this account's categories
-  // are all unlimited in practice, so the bar reads as unbounded rather than
-  // computing a percentage that never turns out to be less than 100%.
+  // boundary any more (see CopilotSource.qml), and on an unlimited plan
+  // there is no percentage to show in the first place -- so the summary
+  // reports the running credits total rather than an unbounded "∞".
   function summaryLabel() {
     if (root.selectedTab === "copilot") {
-      return copilotSource.available ? "Copilot ∞" : "Copilot —"
+      return copilotSource.available
+        ? "Copilot: " + root.formatCount(copilotSource.totalCreditsUsed)
+        : "Copilot —"
     }
     if (!claudeSource.available) return "Claude —"
     return "Claude " + Math.round(claudeBindingPercent() * 100) + "%"
@@ -415,6 +417,11 @@ Panel {
 
   CopilotSource {
     id: copilotSource
+    // Blank unless the user set a specific account in the widget's settings;
+    // the collector falls back to gh's active account on a blank.
+    githubUser: root.settings && root.settings.githubUser
+      ? String(root.settings.githubUser)
+      : ""
   }
 
   Timer {
@@ -679,6 +686,16 @@ Panel {
               color: root.popupText
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: "Total credits used: " + root.formatCount(copilotSource.totalCreditsUsed)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
 
             PanelSeparator {

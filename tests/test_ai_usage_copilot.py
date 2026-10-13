@@ -52,7 +52,7 @@ def mod():
 
 # ---------------------------------------------------------------- get_token
 
-def test_get_token_pins_hostname_and_user_and_shell_false(mod, monkeypatch):
+def test_get_token_pins_hostname_and_shell_false_without_a_user(mod, monkeypatch):
     captured = {}
 
     def fake_run(command, capture_output, shell, env, text):
@@ -65,8 +65,29 @@ def test_get_token_pins_hostname_and_user_and_shell_false(mod, monkeypatch):
     token = mod.get_token()
 
     assert token == SYNTHETIC_TOKEN
-    assert captured["command"] == ["gh", "auth", "token", "--hostname", "github.com", "--user", "bobbyw_jsi"]
+    assert captured["command"] == ["gh", "auth", "token", "--hostname", "github.com"]
     assert captured["shell"] is False
+
+
+def test_get_token_appends_the_requested_user_to_the_gh_invocation(mod, monkeypatch):
+    captured = {}
+
+    def fake_run(command, capture_output, shell, env, text):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout=SYNTHETIC_TOKEN + "\n", stderr="")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    mod.get_token("octocat")
+
+    assert captured["command"] == [
+        "gh", "auth", "token", "--hostname", "github.com", "--user", "octocat",
+    ]
+
+
+def test_token_command_hostname_is_pinned_for_every_account(mod):
+    for user in ("", "octocat", "someone-else"):
+        command = mod.token_command(user)
+        assert command[:5] == ["gh", "auth", "token", "--hostname", "github.com"]
 
 
 def test_get_token_strips_override_vars_without_mutating_parent_env(mod, monkeypatch):
@@ -397,7 +418,29 @@ def test_prune_history_keeps_only_the_most_recent_n_dates(mod):
 
 def test_history_path_respects_xdg_cache_home(mod, monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    assert mod.history_path() == tmp_path / "bwright.ai-usage" / "copilot-history.json"
+    assert mod.history_path() == tmp_path / "ai-usage" / "copilot-history.json"
+
+
+def test_history_filename_is_shared_when_no_account_is_requested(mod):
+    assert mod.history_filename() == "copilot-history.json"
+    assert mod.history_filename("") == "copilot-history.json"
+
+
+def test_history_filename_is_per_account_so_totals_are_never_cross_diffed(mod):
+    assert mod.history_filename("octocat") == "copilot-history-octocat.json"
+    assert mod.history_filename("someone-else") == "copilot-history-someone-else.json"
+    assert mod.history_filename("octocat") != mod.history_filename("someone-else")
+
+
+def test_history_filename_cannot_escape_the_cache_directory(mod, monkeypatch, tmp_path):
+    """A GitHub login is only ever [A-Za-z0-9-], so this guards a typo'd or
+    hostile --user argument rather than any real account."""
+    assert mod.history_filename("../../etc/passwd") == "copilot-history-.._.._etc_passwd.json"
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    path = mod.history_path("../../etc/passwd")
+    assert path.parent == tmp_path / "ai-usage"
+    assert path.resolve().is_relative_to(tmp_path.resolve())
 
 
 @pytest.fixture()
@@ -406,7 +449,7 @@ def history_file(tmp_path):
     for tests exercising sample_history()/recent_days_for() directly, as opposed
     to test_history_path_respects_xdg_cache_home above, which tests that shape
     is what history_path() itself actually produces."""
-    return tmp_path / "bwright.ai-usage" / "copilot-history.json"
+    return tmp_path / "ai-usage" / "copilot-history.json"
 
 
 def test_sample_history_creates_file_and_records_todays_total(mod, history_file):
@@ -477,10 +520,10 @@ def test_recent_days_for_never_writes_the_token(mod, monkeypatch, tmp_path):
 
 def test_main_success_prints_one_json_record_and_exits_zero(mod, monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    monkeypatch.setattr(mod, "get_token", lambda: SYNTHETIC_TOKEN)
+    monkeypatch.setattr(mod, "get_token", lambda user="": SYNTHETIC_TOKEN)
     monkeypatch.setattr(mod, "fetch_quota", lambda token: SAMPLE_PAYLOAD)
 
-    mod.main()  # returns normally (exit 0) on success -- no SystemExit
+    mod.main([])  # returns normally (exit 0) on success -- no SystemExit
 
     out = capsys.readouterr()
     record = json.loads(out.out)
@@ -488,18 +531,40 @@ def test_main_success_prints_one_json_record_and_exits_zero(mod, monkeypatch, ca
     assert "categories" not in record
     assert record["recentDays"] == []
     assert record["todayCreditsUsed"] == -1  # no prior-day baseline yet -- first run
+    assert record["totalCreditsUsed"] == 11807  # period-cumulative, always present
     assert SYNTHETIC_TOKEN not in out.out
     assert SYNTHETIC_TOKEN not in out.err
 
 
+def test_main_forwards_the_user_argument_to_the_token_and_the_cache(mod, monkeypatch, capsys, tmp_path):
+    """--user has to reach both halves: the gh invocation that reads the token,
+    and the history cache that must stay separate per account."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    seen = {}
+
+    def fake_get_token(user=""):
+        seen["user"] = user
+        return SYNTHETIC_TOKEN
+
+    monkeypatch.setattr(mod, "get_token", fake_get_token)
+    monkeypatch.setattr(mod, "fetch_quota", lambda token: SAMPLE_PAYLOAD)
+
+    mod.main(["--user", "octocat"])
+
+    assert seen["user"] == "octocat"
+    assert (tmp_path / "ai-usage" / "copilot-history-octocat.json").is_file()
+    assert not (tmp_path / "ai-usage" / "copilot-history.json").exists()
+    assert SYNTHETIC_TOKEN not in capsys.readouterr().out
+
+
 def test_main_reports_todays_credits_used_once_a_prior_sample_exists(mod, monkeypatch, capsys, tmp_path, history_file):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    monkeypatch.setattr(mod, "get_token", lambda: SYNTHETIC_TOKEN)
+    monkeypatch.setattr(mod, "get_token", lambda user="": SYNTHETIC_TOKEN)
     monkeypatch.setattr(mod, "fetch_quota", lambda token: SAMPLE_PAYLOAD)
     monkeypatch.setattr(mod, "local_today_string", lambda: "2026-09-10")
     mod.sample_history(history_file, "2026-09-09", 11800)
 
-    mod.main()
+    mod.main([])
 
     record = json.loads(capsys.readouterr().out)
     assert record["recentDays"] == [{"date": "2026-09-10", "creditsUsed": 7}]
@@ -508,10 +573,10 @@ def test_main_reports_todays_credits_used_once_a_prior_sample_exists(mod, monkey
 
 def test_main_success_writes_todays_sample_to_the_history_cache(mod, monkeypatch, tmp_path, history_file):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    monkeypatch.setattr(mod, "get_token", lambda: SYNTHETIC_TOKEN)
+    monkeypatch.setattr(mod, "get_token", lambda user="": SYNTHETIC_TOKEN)
     monkeypatch.setattr(mod, "fetch_quota", lambda token: SAMPLE_PAYLOAD)
 
-    mod.main()
+    mod.main([])
 
     assert history_file.is_file()
     history = json.loads(history_file.read_text())
@@ -613,15 +678,15 @@ def test_no_filesystem_writes_beyond_the_history_cache_on_success(mod, monkeypat
     cache file itself, and it must never contain the token."""
     for var, key in ISOLATION_ENV_VARS.items():
         monkeypatch.setenv(var, str(isolated_dirs[key]))
-    monkeypatch.setattr(mod, "get_token", lambda: SYNTHETIC_TOKEN)
+    monkeypatch.setattr(mod, "get_token", lambda user="": SYNTHETIC_TOKEN)
     monkeypatch.setattr(mod, "fetch_quota", lambda token: SAMPLE_PAYLOAD)
 
     before = _snapshot(isolated_dirs)
-    mod.main()
+    mod.main([])
     after = _snapshot(isolated_dirs)
 
     new_paths = set(after) - set(before)
-    history_file = isolated_dirs["cache"] / "bwright.ai-usage" / "copilot-history.json"
+    history_file = isolated_dirs["cache"] / "ai-usage" / "copilot-history.json"
     assert new_paths <= {history_file.parent, history_file}, f"unexpected writes: {new_paths}"
     for path in after:
         if path.is_file():

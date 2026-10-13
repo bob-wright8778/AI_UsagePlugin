@@ -10,6 +10,16 @@ Item {
 
   readonly property string scriptPath: String(Qt.resolvedUrl("bin/ai-usage-copilot")).replace("file://", "")
 
+  // Optional gh account login, from the widget's githubUser setting. Blank
+  // means "whichever account gh has active," which is the only sensible
+  // default for a machine with a single login -- the collector then omits
+  // --user entirely rather than guessing at one.
+  property string githubUser: ""
+
+  readonly property var collectorCommand: root.githubUser
+    ? [root.scriptPath, "--user", root.githubUser]
+    : [root.scriptPath]
+
   property bool available: false
   property string plan: ""
   property string quotaResetDate: ""
@@ -20,6 +30,9 @@ Item {
   // same as Claude's todayPrompts/todaySessions/todayTotalTokens -- a
   // caller never has to date-compare recentDays to find "today" in it.
   property real todayCreditsUsed: -1
+  // Raw period-cumulative total straight from the API -- always present
+  // whenever available is true, unlike todayCreditsUsed's cold-start gap.
+  property real totalCreditsUsed: 0
 
   function refresh() {
     if (!proc.running) proc.running = true
@@ -34,6 +47,7 @@ Item {
       root.quotaResetDate = String(record.quotaResetDate || "")
       root.recentDays = record.recentDays
       root.todayCreditsUsed = Number(record.todayCreditsUsed)
+      root.totalCreditsUsed = Number(record.totalCreditsUsed)
       root.available = true
     } catch (e) {
       root.available = false
@@ -42,7 +56,7 @@ Item {
 
   Process {
     id: proc
-    command: [root.scriptPath]
+    command: root.collectorCommand
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.parse(text)
