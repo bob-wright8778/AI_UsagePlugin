@@ -10,6 +10,16 @@ Item {
 
   readonly property string scriptPath: String(Qt.resolvedUrl("bin/ai-usage-copilot")).replace("file://", "")
 
+  // Optional gh account login, from the widget's githubUser setting. Blank
+  // means "whichever account gh has active," which is the only sensible
+  // default for a machine with a single login -- the collector then omits
+  // --user entirely rather than guessing at one.
+  property string githubUser: ""
+
+  readonly property var collectorCommand: root.githubUser
+    ? [root.scriptPath, "--user", root.githubUser]
+    : [root.scriptPath]
+
   property bool available: false
   property string plan: ""
   property string quotaResetDate: ""
@@ -46,7 +56,7 @@ Item {
 
   Process {
     id: proc
-    command: [root.scriptPath]
+    command: root.collectorCommand
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.parse(text)

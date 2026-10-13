@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
-"""Fetch GitHub Copilot quota for the bobbyw_jsi account and print one JSON record.
+"""Fetch a GitHub Copilot quota and print one JSON record.
+
+Standalone and distro-agnostic: stdlib-only Python 3 plus the `gh` CLI, with no dependency on
+Omarchy or on the QML widget that normally calls it. Run it by hand or from any status bar.
+
+Usage: ai-usage-copilot [--user LOGIN]
+
+With --user, the token is taken from that specific `gh` account, which is what you want when `gh`
+holds more than one (a personal login and a work/enterprise login, say). Without it, `gh`'s
+currently active account is used.
 
 On success, prints {"plan", "quotaResetDate", "recentDays": [{"date", "creditsUsed"}, ...],
 "todayCreditsUsed", "totalCreditsUsed"} to stdout and exits 0. `totalCreditsUsed` is the raw
 period-cumulative sum straight from the API, always present. `recentDays`/`todayCreditsUsed` are
 derived locally: the copilot_internal/user endpoint only ever returns that one cumulative total,
 never a daily breakdown, so this script samples it on every run into a small local history cache
-($XDG_CACHE_HOME/bwright.ai-usage/copilot-history.json) and computes day-over-day deltas from it.
+($XDG_CACHE_HOME/ai-usage/copilot-history[-LOGIN].json) and computes day-over-day deltas from it.
 That cache holds only ISO dates and integer credit totals -- never the token, a header, or a raw
 API response -- and a failure to read/write it (missing, corrupt, unwritable) degrades to "no
 historical days yet," never to the failure path below, which is reserved for the quota fetch
 itself. On any fetch failure, prints a fixed, credential-free diagnostic to stderr and exits 1 --
 never partial JSON, never raw subprocess/HTTP output, never a token or header value.
 """
+import argparse
 import datetime
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -24,7 +35,6 @@ import urllib.request
 from pathlib import Path
 
 GH_HOSTNAME = "github.com"
-GH_USER = "bobbyw_jsi"
 API_URL = "https://api.github.com/copilot_internal/user"
 QUOTA_CATEGORIES = ("chat", "completions", "premium_interactions")
 TOKEN_OVERRIDE_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
@@ -38,7 +48,7 @@ REQUEST_HEADERS = {
     "X-GitHub-Api-Version": "2025-04-01",
 }
 
-CACHE_NAMESPACE = "bwright.ai-usage"
+CACHE_NAMESPACE = "ai-usage"
 HISTORY_FILENAME = "copilot-history.json"
 HISTORY_RETENTION_DAYS = 8  # enough distinct calendar dates to derive 7 daily deltas
 
@@ -46,6 +56,20 @@ HISTORY_RETENTION_DAYS = 8  # enough distinct calendar dates to derive 7 daily d
 def fail(message):
     print(message, file=sys.stderr)
     sys.exit(1)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="ai-usage-copilot",
+        description="Print one JSON record of GitHub Copilot quota usage.",
+    )
+    parser.add_argument(
+        "--user",
+        default="",
+        metavar="LOGIN",
+        help="gh account login to read the token from. Omit to use gh's active account.",
+    )
+    return parser.parse_args(argv)
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -63,10 +87,19 @@ def credential_env():
     return env
 
 
-def get_token():
+def token_command(user=""):
+    """The pinned `gh` invocation. --user is appended only for an explicitly
+    requested login; without one, gh resolves its own active account."""
+    command = ["gh", "auth", "token", "--hostname", GH_HOSTNAME]
+    if user:
+        command += ["--user", user]
+    return command
+
+
+def get_token(user=""):
     try:
         result = subprocess.run(
-            ["gh", "auth", "token", "--hostname", GH_HOSTNAME, "--user", GH_USER],
+            token_command(user),
             capture_output=True,
             shell=False,
             env=credential_env(),
@@ -119,9 +152,21 @@ def parse_quota(payload):
 # --------------------------------------------------------- daily-history bookkeeping
 
 
-def history_path():
+def history_filename(user=""):
+    """One history file per account, so switching --user never diffs one
+    account's cumulative total against another's. A GitHub login is already
+    limited to [A-Za-z0-9-], so the sanitizing pass only ever matters for a
+    typo'd argument that would otherwise escape the cache directory."""
+    if not user:
+        return HISTORY_FILENAME
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", user)
+    stem, extension = os.path.splitext(HISTORY_FILENAME)
+    return stem + "-" + safe + extension
+
+
+def history_path(user=""):
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / CACHE_NAMESPACE / HISTORY_FILENAME
+    return Path(base) / CACHE_NAMESPACE / history_filename(user)
 
 
 def local_today_string():
@@ -176,31 +221,33 @@ def sample_history(path, today, total_now, keep=HISTORY_RETENTION_DAYS):
     return history
 
 
-def recent_days_for(total_now, today):
+def recent_days_for(total_now, today, user=""):
     """Best-effort day-by-day credits history: sample `total_now` into the local cache
     and return the resulting deltas. Any failure here (unwritable cache, corrupt file,
     permissions) degrades to no historical days -- this must never turn a successful
     quota fetch into a failed command; that failure path is reserved for the fetch
     itself."""
     try:
-        history = sample_history(history_path(), today, total_now)
+        history = sample_history(history_path(user), today, total_now)
         return compute_recent_days(history)
     except Exception:
         return []
 
 
-def main():
+def main(argv=None):
     # A stray, truly-unexpected exception (not one of the specific failure
     # paths above, which already exit via fail()) must still never reach
     # stderr as a raw traceback -- that could echo back request/response
     # internals. sys.exit()'s SystemExit isn't an Exception subclass, so the
-    # fail() calls above pass through this untouched.
+    # fail() calls above, and argparse's own --help/usage exits, pass through
+    # this untouched.
     try:
-        token = get_token()
+        args = parse_args(argv)
+        token = get_token(args.user)
         payload = fetch_quota(token)
         quota = parse_quota(payload)
         today = local_today_string()
-        recent_days = recent_days_for(quota["totalCreditsUsed"], today=today)
+        recent_days = recent_days_for(quota["totalCreditsUsed"], today=today, user=args.user)
         # Mirrors the collector's own todayPrompts/todaySessions/todayTotalTokens
         # fields for Claude -- the caller gets "today" as a plain value, never
         # has to date-compare recentDays itself. -1 is this codebase's existing

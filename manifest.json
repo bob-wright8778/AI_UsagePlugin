@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "bwright.ai-usage",
+  "id": "bob-wright8778.ai-usage",
   "name": "AI Usage",
-  "version": "1.0.0",
-  "author": "bwright",
+  "version": "2.0.0",
+  "author": "bob-wright8778",
   "license": "MIT",
-  "description": "Claude Code and GitHub Copilot (JSI) usage in one bar icon and popup panel.",
+  "description": "Claude Code and GitHub Copilot usage in one bar icon and popup panel.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
@@ -16,6 +16,19 @@
     "description": "One bar icon and one panel: Claude Code and GitHub Copilot usage, switchable by tab.",
     "category": "AI",
     "aliases": ["ai-usage", "usage"],
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "githubUser": ""
+    },
+    "schema": [
+      {
+        "key": "githubUser",
+        "type": "string",
+        "label": "GitHub account",
+        "defaultValue": "",
+        "description": "Optional. The gh account login to read the Copilot quota for, when gh holds more than one (a personal and a work login, say). Leave blank to use gh's active account."
+      }
+    ]
   }
 }
