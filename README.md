@@ -59,6 +59,21 @@ ln -s "$PWD/AI_UsagePlugin" ~/.config/omarchy/plugins/bob-wright8778.ai-usage
 omarchy plugin enable bob-wright8778.ai-usage --section right
 ```
 
+### Install from a tarball
+
+If you were handed a `bob-wright8778.ai-usage-vX.Y.Z.tar.gz` instead of the repo URL, unpack it
+straight into the plugins directory — the archive already contains a correctly named top-level
+folder, so no renaming is needed:
+
+```
+tar -xzf bob-wright8778.ai-usage-v2.0.0.tar.gz -C ~/.config/omarchy/plugins/
+omarchy plugin validate ~/.config/omarchy/plugins/bob-wright8778.ai-usage
+omarchy plugin enable bob-wright8778.ai-usage --section right
+```
+
+A tarball install isn't git-managed, so `omarchy plugin update` won't see it — replace the folder
+with a newer tarball to upgrade, or install from the repo URL instead if you want updates.
+
 ## Settings
 
 | Key | Default | Meaning |
